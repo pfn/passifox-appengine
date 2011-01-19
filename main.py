@@ -22,6 +22,7 @@ class Page(db.Model):
 class Hit(db.Model):
     hit_ts = db.DateTimeProperty(auto_now=True)
     uri    = db.StringProperty()
+    ip     = db.StringProperty()
 
 class PostReceiveHandler(webapp.RequestHandler):
     def post(self):
@@ -93,6 +94,7 @@ def update_install_tracker(request, response):
     if not hit:
         hit = Hit(key_name=uid)
     hit.uri = request.path
+    hit.ip = request.remote_addr
     hit.put()
 
 def get_page_content(request, response):
