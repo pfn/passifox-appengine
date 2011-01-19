@@ -97,11 +97,13 @@ def update_install_tracker(request, response):
     hit.ip = request.remote_addr
     hit.put()
 
-def get_page_content(request, response):
-    uri = request.path
+def get_page_content(request, response, uri=None):
+    if uri is None:
+        # only update for file download, not README
+        update_install_tracker(request, response)
+        uri = request.path
     page = Page.get_by_key_name(uri)
 
-    update_install_tracker(request, response)
     if not page:
         url = "%s%s" % (GITHUB_URL, uri)
         res= urlfetch.fetch(url)
@@ -141,7 +143,13 @@ class RedirectToRootHandler(webapp.RequestHandler):
 
 class RootHandler(webapp.RequestHandler):
     def get(self):
-        self.response.out.write('PassIFox File Host')
+        try:
+            c = get_page_content(self.request, self.response, '/README')
+            self.response.headers['Content-type'] = "text/plain"
+            self.response.out.write(c)
+        except StatusException, e:
+            self.error(e.code)
+            self.response.out.write(e.msg)
 
 application = webapp.WSGIApplication([
         ('/',                    RootHandler),
