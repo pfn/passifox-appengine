@@ -36,18 +36,20 @@ class PostReceiveHandler(webapp.RequestHandler):
             self.response.out.write("bad repository")
             return
         if data.has_key('commits'):
+            updated = False
             for commit in data['commits']:
                 if commit.has_key('modified'):
                     modified = commit['modified']
-                    updated = False
                     for f in CACHED_FILES:
                         if f in modified:
-                            p = Page.get_by_name("/" + f)
+                            p = Page.get_by_key_name("/" + f)
                             if p:
-                                p.delete()
                                 updated = True
-                    self.error(304)
-                    self.response.out.write("no files cached")
+                                p.delete()
+
+            if not updated:
+                self.error(304)
+                self.response.out.write("no files cached")
         else:
             self.error(304)
             self.response.out.write("nothing to do")
