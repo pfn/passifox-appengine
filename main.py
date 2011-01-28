@@ -3,7 +3,7 @@ import uuid
 from Cookie import BaseCookie
 from google.appengine.ext import webapp, db
 from google.appengine.ext.webapp import util
-from google.appengine.api import urlfetch
+from google.appengine.api import urlfetch, memcache
 from django.utils import simplejson
 
 GITHUB_URL = "https://github.com/pfn/passifox/raw/master"
@@ -24,6 +24,7 @@ class Hit(db.Model):
     uri    = db.StringProperty()
     ip     = db.StringProperty()
     count  = db.IntegerProperty()
+    vers   = db.StringProperty()
 
 class PostReceiveHandler(webapp.RequestHandler):
     def post(self):
@@ -46,6 +47,7 @@ class PostReceiveHandler(webapp.RequestHandler):
                         if f in modified:
                             p = Page.get_by_key_name("/" + f)
                             if p:
+                                memcache.delete("/" + f)
                                 updated = True
                                 p.delete()
 
@@ -84,6 +86,26 @@ def set_cookie(key, value, response):
     header_value = cookies[key].output(header='').lstrip()
     response.headers['Set-Cookie'] = header_value
 
+def get_ua_version(request):
+    ua = request.headers['user-agent']
+    gecko = None
+    ff = None
+    if ua:
+        if ua.find("Gecko/") != -1:
+            end = ua.find(")")
+            start = -1
+            if end != -1:
+                start = ua.find(":") + 1
+            if start > 0:
+                gecko = ua[start:end]
+            start = ua.rfind("/") + 1
+            end = ua.rfind(",")
+            if end == -1: end = None
+            if gecko is not None and start > 0:
+                ff = ua[start:end]
+    if gecko and ff:
+        return "%s - %s" % (ff, gecko)
+
 def update_install_tracker(request, response):
     name = 'passifox-install'
     if request.cookies.has_key(name):
@@ -96,6 +118,9 @@ def update_install_tracker(request, response):
         hit = Hit(key_name=uid)
     hit.uri = request.path
     hit.ip = request.remote_addr
+    ua = get_ua_version(request)
+    if ua:
+        hit.vers = ua
     if not hit.count:
         hit.count = 0
     hit.count += 1
@@ -106,6 +131,11 @@ def get_page_content(request, response, uri=None):
         # only update for file download, not README
         update_install_tracker(request, response)
         uri = request.path
+
+    content = memcache.get(uri)
+    if content:
+        return content
+
     page = Page.get_by_key_name(uri)
 
     if not page:
@@ -114,6 +144,7 @@ def get_page_content(request, response, uri=None):
         if res.status_code == 200:
             page = Page(key_name=uri)
             page.content = db.Blob(res.content)
+            memcache.set(uri, page.content)
             page.put()
         else:
             ex = StatusException(res.content, res.status_code)
