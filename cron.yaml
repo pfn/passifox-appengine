@@ -1,0 +1,4 @@
+cron:
+- description: clear old hits
+  url: /cron/clearhits
+  schedule: every 24 hours

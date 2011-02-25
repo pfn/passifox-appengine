@@ -1,6 +1,8 @@
 import logging
 import uuid
+import datetime
 from Cookie import BaseCookie
+from google.appengine.runtime.apiproxy_errors import CapabilityDisabledError
 from google.appengine.ext import webapp, db
 from google.appengine.ext.webapp import util
 from google.appengine.api import urlfetch, memcache
@@ -124,7 +126,10 @@ def update_install_tracker(request, response):
     if not hit.count:
         hit.count = 0
     hit.count += 1
-    hit.put()
+    try:
+        hit.put()
+    except CapabilityDisabledError:
+        pass
 
 def get_page_content(request, response, uri=None):
     if uri is None:
@@ -145,7 +150,10 @@ def get_page_content(request, response, uri=None):
             page = Page(key_name=uri)
             page.content = db.Blob(res.content)
             memcache.set(uri, page.content)
-            page.put()
+            try:
+                page.put()
+            except CapabilityDisabledError:
+                pass
         else:
             ex = StatusException(res.content, res.status_code)
             raise ex
@@ -176,6 +184,14 @@ class RedirectToRootHandler(webapp.RequestHandler):
     def get(self):
         self.redirect('/')
 
+class ClearHitsHandler(webapp.RequestHandler):
+    def get(self):
+        now = datetime.datetime.now()
+        lastweek = now - datetime.timedelta(days=7)
+        hits = db.GqlQuery("SELECT __key__ FROM Hit WHERE hit_ts < :1", 
+                lastweek)
+        db.delete(hits)
+
 class RootHandler(webapp.RequestHandler):
     def get(self):
         try:
@@ -188,6 +204,7 @@ class RootHandler(webapp.RequestHandler):
 
 application = webapp.WSGIApplication([
         ('/',                    RootHandler),
+        ('/cron/clearhits',      ClearHitsHandler),
         ('/update.rdf',          UpdateFileHandler),
         ('/passifox.xpi',        InstallFileHandler),
         ('/github-post-receive', PostReceiveHandler),
