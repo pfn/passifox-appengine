@@ -2,14 +2,16 @@ import logging
 import uuid
 import datetime
 from Cookie import BaseCookie
-from google.appengine.runtime.apiproxy_errors import CapabilityDisabledError
+from google.appengine.runtime import DeadlineExceededError
+from google.appengine.runtime.apiproxy_errors import CapabilityDisabledError, ApplicationError
 from google.appengine.ext import webapp, db
 from google.appengine.ext.webapp import util
 from google.appengine.api import urlfetch, memcache
 from django.utils import simplejson
 
-GITHUB_URL = "https://github.com/pfn/passifox/raw/master"
-CACHED_FILES = ('update.rdf', 'passifox.xpi')
+PASSIFOX_GITHUB_URL = "https://github.com/pfn/passifox/raw/master"
+KEEPASSHTTP_GITHUB_URL = "https://github.com/pfn/keepasshttp/raw/master"
+CACHED_FILES = ('update.rdf', 'passifox.xpi', 'README', 'KeePassHttp.plgx')
 
 class StatusException(Exception):
     def __init__(self, msg, code):
@@ -36,7 +38,7 @@ class PostReceiveHandler(webapp.RequestHandler):
             self.response.out.write("bad request")
             return
         data = simplejson.loads(payload)
-        if data['repository']['url'].find("/pfn/passifox") == -1:
+        if data['repository']['url'].find("/pfn/passifox") == -1 and data['repository']['url'].find("/pfn/keepasshttp") == -1:
             self.error(403)
             self.response.out.write("bad repository")
             return
@@ -128,10 +130,10 @@ def update_install_tracker(request, response):
     hit.count += 1
     try:
         hit.put()
-    except CapabilityDisabledError:
-        pass
+    except (CapabilityDisabledError, DeadlineExceededError, ApplicationError), e:
+        logging.error("Unable to save hit count update: " + str(e))
 
-def get_page_content(request, response, uri=None):
+def get_page_content(request, response, uri=None, source=PASSIFOX_GITHUB_URL):
     if uri is None:
         # only update for file download, not README
         update_install_tracker(request, response)
@@ -144,7 +146,7 @@ def get_page_content(request, response, uri=None):
     page = Page.get_by_key_name(uri)
 
     if not page:
-        url = "%s%s" % (GITHUB_URL, uri)
+        url = "%s%s" % (source, uri)
         res= urlfetch.fetch(url)
         if res.status_code == 200:
             page = Page(key_name=uri)
@@ -152,8 +154,8 @@ def get_page_content(request, response, uri=None):
             memcache.set(uri, page.content)
             try:
                 page.put()
-            except CapabilityDisabledError:
-                pass
+            except (CapabilityDisabledError, DeadlineExceededError, ApplicationError), e:
+                logging.error("Unable to save page content: " + str(e))
         else:
             ex = StatusException(res.content, res.status_code)
             raise ex
@@ -175,6 +177,17 @@ class InstallFileHandler(webapp.RequestHandler):
         try:
             c = get_page_content(self.request, self.response)
             self.response.headers['Content-type'] = "application/x-xpinstall"
+            self.response.out.write(c)
+        except StatusException, e:
+            self.error(e.code)
+            self.response.out.write(e.msg)
+
+class KeePassHttpPLGXHandler(webapp.RequestHandler):
+    def get(self):
+        try:
+            c = get_page_content(self.request, self.response, '/KeePassHttp.plgx', KEEPASSHTTP_GITHUB_URL)
+            self.response.headers['Content-type'] = "application/octet-stream"
+            self.response.headers['Content-disposition'] = "attachment; filename=KeePassHttp.plgx"
             self.response.out.write(c)
         except StatusException, e:
             self.error(e.code)
@@ -207,6 +220,7 @@ application = webapp.WSGIApplication([
         ('/cron/clearhits',      ClearHitsHandler),
         ('/update.rdf',          UpdateFileHandler),
         ('/passifox.xpi',        InstallFileHandler),
+        ('/KeePassHttp.plgx',    KeePassHttpPLGXHandler),
         ('/github-post-receive', PostReceiveHandler),
         (r'/.*',                 RedirectToRootHandler),
 ], debug=True)
