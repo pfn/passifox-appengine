@@ -1,6 +1,7 @@
 import logging
 import uuid
 import datetime
+import mimetypes
 from Cookie import BaseCookie
 from google.appengine.runtime import DeadlineExceededError
 from google.appengine.runtime.apiproxy_errors import CapabilityDisabledError, ApplicationError
@@ -11,7 +12,6 @@ from django.utils import simplejson
 
 PASSIFOX_GITHUB_URL = "https://github.com/pfn/passifox/raw/master"
 KEEPASSHTTP_GITHUB_URL = "https://github.com/pfn/keepasshttp/raw/master"
-CACHED_FILES = ('update.rdf', 'passifox.xpi', 'README', 'KeePassHttp.plgx')
 
 class StatusException(Exception):
     def __init__(self, msg, code):
@@ -43,21 +43,11 @@ class PostReceiveHandler(webapp.RequestHandler):
             self.response.out.write("bad repository")
             return
         if data.has_key('commits'):
-            updated = False
             for commit in data['commits']:
                 if commit.has_key('modified'):
                     modified = commit['modified']
-                    for f in CACHED_FILES:
-                        if f in modified:
-                            p = Page.get_by_key_name("/" + f)
-                            if p:
-                                memcache.delete("/" + f)
-                                updated = True
-                                p.delete()
-
-            if not updated:
-                self.error(304)
-                self.response.out.write("no files cached")
+                    if len(modified) > 0:
+                        db.delete(Page.all())
         else:
             self.error(304)
             self.response.out.write("nothing to do")
@@ -147,7 +137,7 @@ def get_page_content(request, response, uri=None, source=PASSIFOX_GITHUB_URL):
 
     if not page:
         url = "%s%s" % (source, uri)
-        res= urlfetch.fetch(url)
+        res = urlfetch.fetch(url)
         if res.status_code == 200:
             page = Page(key_name=uri)
             page.content = db.Blob(res.content)
@@ -193,6 +183,60 @@ class KeePassHttpPLGXHandler(webapp.RequestHandler):
             self.error(e.code)
             self.response.out.write(e.msg)
 
+class KeePassHttpUpdateHandler(webapp.RequestHandler):
+    def get(self):
+        try:
+            c = get_page_content(self.request, self.response, '/update-version.txt', KEEPASSHTTP_GITHUB_URL)
+            self.response.headers['Content-type'] = "text/plain"
+            self.response.out.write(c)
+        except StatusException, e:
+            self.error(e.code)
+            self.response.out.write(e.msg)
+
+class KPHContentHandler(webapp.RequestHandler):
+    def get(self):
+        try:
+            p = self.request.path[len("/kph"):]
+            fn = p[p.rindex("/") + 1:]
+            mtype = mimetypes.guess_type(fn, False)
+            if mtype[1]:
+              mime = "%s; charset=%s" % (mtype[0], mtype[1])
+            else:
+              mime = mtype[0]
+            c = get_page_content(self.request, self.response, p, KEEPASSHTTP_GITHUB_URL)
+            self.response.headers['Content-type'] = mime
+            if mime.startswith("application/"):
+              disp = "attachment; filename=%s" % fn
+            else:
+              disp = "inline"
+            self.response.headers['Content-disposition'] = disp
+            self.response.out.write(c)
+        except StatusException, e:
+            self.error(e.code)
+            self.response.out.write(e.msg)
+
+class PIFContentHandler(webapp.RequestHandler):
+    def get(self):
+        try:
+            p = self.request.path[len("/ext"):]
+            fn = p[p.rindex("/") + 1:]
+            mtype = mimetypes.guess_type(fn, False)
+            if mtype[1]:
+              mime = "%s; charset=%s" % (mtype[0], mtype[1])
+            else:
+              mime = mtype[0]
+            c = get_page_content(self.request, self.response, p)
+            self.response.headers['Content-type'] = mime
+            if mime.startswith("application/"):
+              disp = "attachment; filename=%s" % fn
+            else:
+              disp = "inline"
+            self.response.headers['Content-disposition'] = disp
+            self.response.out.write(c)
+        except StatusException, e:
+            self.error(e.code)
+            self.response.out.write(e.msg)
+
 class RedirectToRootHandler(webapp.RequestHandler):
     def get(self):
         self.redirect('/')
@@ -208,7 +252,7 @@ class ClearHitsHandler(webapp.RequestHandler):
 class RootHandler(webapp.RequestHandler):
     def get(self):
         try:
-            c = get_page_content(self.request, self.response, '/README')
+            c = get_page_content(self.request, self.response, '/README.md')
             self.response.headers['Content-type'] = "text/plain"
             self.response.out.write(c)
         except StatusException, e:
@@ -219,9 +263,12 @@ application = webapp.WSGIApplication([
         ('/',                    RootHandler),
         ('/cron/clearhits',      ClearHitsHandler),
         ('/update.rdf',          UpdateFileHandler),
+        ('/update-version.txt',  KeePassHttpUpdateHandler),
         ('/passifox.xpi',        InstallFileHandler),
         ('/KeePassHttp.plgx',    KeePassHttpPLGXHandler),
         ('/github-post-receive', PostReceiveHandler),
+        (r'/kph/.*',             KPHContentHandler),
+        (r'/ext/.*',             PIFContentHandler),
         (r'/.*',                 RedirectToRootHandler),
 ], debug=True)
 
