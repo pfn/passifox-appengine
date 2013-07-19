@@ -48,6 +48,7 @@ class PostReceiveHandler(webapp.RequestHandler):
                     modified = commit['modified']
                     if len(modified) > 0:
                         db.delete(Page.all())
+                        memcache.flush_all()
         else:
             self.error(304)
             self.response.out.write("nothing to do")
