@@ -127,7 +127,7 @@ def update_install_tracker(request, response):
 def get_page_content(request, response, uri=None, source=PASSIFOX_GITHUB_URL):
     if uri is None:
         # only update for file download, not README
-        update_install_tracker(request, response)
+        #update_install_tracker(request, response)
         uri = request.path
 
     content = memcache.get(uri)
