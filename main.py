@@ -136,7 +136,9 @@ def get_page_content(request, response, uri=None, source=PASSIFOX_GITHUB_URL):
 
     page = Page.get_by_key_name(uri)
 
-    if not page:
+    if page:
+        memcache.set(uri, page.content)
+    else:
         url = "%s%s" % (source, uri)
         res = urlfetch.fetch(url)
         if res.status_code == 200:
